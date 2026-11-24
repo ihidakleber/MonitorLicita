@@ -125,10 +125,17 @@ td input{width:100%;padding:4px 6px}
         (<b>0036</b>.040015/2026-41 → SESAU). Aqui estão todos os prefixos encontrados nas compras da UASG.
         Dê um nome, um limite próprio, ou marque para ignorar. Limite em branco = usa o limite padrão da UASG.
         Os nomes com “?” são sugestões tiradas das siglas no texto do objeto; confirme antes de salvar.
+        <br><b>Sugestão de limite (P80):</b> o valor abaixo do qual estão 80% das compras do órgão na janela
+        carregada. Com esse limite, você vê apenas os ~20% maiores certames daquele órgão. Se o órgão tem menos de
+        <span id="amMin">5</span> compras com valor conhecido, a sugestão usa o P80 da UASG inteira.
       </p>
-      <div class="bar"><select id="cfgUasg"></select></div>
+      <div class="bar"><select id="cfgUasg"></select>
+        <span id="p80Uasg" class="small"></span>
+        <span style="flex:1"></span>
+        <button class="b" id="btnAplicarTodos" title="Cria regras com o limite sugerido para todos os prefixos que ainda não têm limite próprio">Aplicar sugestão P80 a todos sem limite</button>
+      </div>
       <div class="scroll">
-      <table><thead><tr><th>Prefixo</th><th>Órgão (nome)</th><th class="n">Limite R$</th><th>Ignorar</th><th class="n">Compras</th><th class="n">Em andamento</th><th class="n">Valor total</th><th>Exemplo de objeto</th><th></th></tr></thead>
+      <table><thead><tr><th>Prefixo</th><th>Órgão (nome)</th><th class="n">Limite R$</th><th class="n" title="Percentil 80 dos valores estimados das compras do órgão: só aparecem os 20% maiores">Sugestão (P80)</th><th>Ignorar</th><th class="n">Compras</th><th class="n">Em andamento</th><th class="n">Valor total</th><th>Exemplo de objeto</th><th></th></tr></thead>
       <tbody id="tOrgaos"></tbody></table>
       </div>
       <h4 style="margin:16px 0 6px">Regras por palavra no objeto</h4>
@@ -294,17 +301,24 @@ window.removerUasg = async c => { if (!confirm(`Remover UASG ${c} e suas regras?
 async function carregarOrgaos(){
   const u = $('#cfgUasg').value; if (!u) { $('#tOrgaos').innerHTML=''; $('#tTexto').innerHTML=''; return; }
   const d = await api(`/api/uasgs/${u}/orgaos`);
+  ORG = d;
+  $('#amMin').textContent = d.amostraMinima;
+  $('#p80Uasg').innerHTML = d.p80Uasg!=null ? `P80 da UASG: <b>${brl(d.p80Uasg)}</b> <span class="muted">(${d.amostraUasg} compras)</span>
+    <button class="b small" onclick="usarP80Uasg()">usar como limite padrão</button>` : '';
   $('#tOrgaos').innerHTML = d.grupos.map(g=>{
     const r = g.regra;
     return `<tr data-pref="${esc(g.prefixo)}">
       <td><b>${esc(g.prefixo)}</b></td>
       <td><input class="o" value="${esc(r?r.orgao:'')}" placeholder="${esc(g.sugestao?g.sugestao+'?':'')}" title="Siglas no texto: ${esc(g.siglas.join(', '))}"></td>
       <td><input class="l" value="${r&&r.limite!=null?r.limite:''}" placeholder="padrão" style="width:110px"></td>
+      <td class="n" title="Mediana: ${brl(g.mediana)} · P80 próprio: ${brl(g.p80Proprio)} · base: ${esc(g.baseSugestao)}">
+        ${g.limiteSugerido!=null?`<b>${brl(g.limiteSugerido)}</b><div class="muted small">${g.baseSugestao==='órgão'?'P80 do órgão':'P80 da UASG'} · n=${g.amostra}</div>
+        <button class="b small" onclick="usarSug(this, ${Math.round(g.limiteSugerido)})">usar</button>`:'<span class="muted">sem dados</span>'}</td>
       <td><input type="checkbox" class="i" ${r&&r.ignorar?'checked':''}></td>
       <td class="n">${g.qtd}</td><td class="n">${g.andamento}</td><td class="n">${brl(g.valor)}</td>
       <td class="small muted">${esc(g.exemplo)}</td>
       <td><button class="b" onclick="salvarPref(this)">${r?'salvar':'criar'}</button>${r?` <button class="b" onclick="delRegra(${r.id})">×</button>`:''}</td></tr>`;
-  }).join('') || '<tr><td colspan="9" class="muted">Sem compras carregadas para esta UASG. Clique em “Atualizar dados”.</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="muted">Sem compras carregadas para esta UASG. Clique em “Atualizar dados”.</td></tr>';
   $('#tTexto').innerHTML = d.regras.filter(r=>r.tipo==='texto').map(r=>`<tr><td>contém “<b>${esc(r.padrao)}</b>”</td><td>→ ${esc(r.orgao)}</td><td class="n">${r.limite!=null?brl(r.limite):'limite padrão'}</td><td>${r.ignorar?'ignorar':''}</td><td><button class="b" onclick="delRegra(${r.id})">remover</button></td></tr>`).join('')
     || '<tr><td class="muted">Nenhuma regra por palavra.</td></tr>';
 }
@@ -313,6 +327,23 @@ window.salvarPref = async btn => {
   try {
     await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'processo',padrao:tr.dataset.pref,
       orgao:o.value || o.placeholder.replace('?','') || tr.dataset.pref, limite:num(tr.querySelector('.l').value), ignorar:tr.querySelector('.i').checked}});
+    await carregarOrgaos(); carregar();
+  } catch(e){ erro(e); }
+};
+let ORG = null;
+window.usarSug = (btn, v) => { const tr = btn.closest('tr'); tr.querySelector('.l').value = v; salvarPref(tr.querySelector('td:last-child button')); };
+window.usarP80Uasg = async () => {
+  const u = (await api('/api/uasgs')).find(x=>x.codigo===$('#cfgUasg').value);
+  await api('/api/uasgs',{method:'POST',body:{codigo:u.codigo,limite_padrao:Math.round(ORG.p80Uasg),janela_dias:u.janela_dias}});
+  await carregarUasgs(); carregar();
+};
+$('#btnAplicarTodos').onclick = async () => {
+  const alvo = ORG.grupos.filter(g => g.limiteSugerido!=null && !(g.regra && g.regra.limite!=null) && !(g.regra && g.regra.ignorar));
+  if (!alvo.length) return alert('Todos os prefixos já têm limite próprio.');
+  if (!confirm(`Criar/atualizar limite P80 para ${alvo.length} prefixos sem limite próprio?`)) return;
+  try {
+    for (const g of alvo) await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'processo',padrao:g.prefixo,
+      orgao:(g.regra&&g.regra.orgao)||g.sugestao||g.prefixo,limite:Math.round(g.limiteSugerido),ignorar:false}});
     await carregarOrgaos(); carregar();
   } catch(e){ erro(e); }
 };

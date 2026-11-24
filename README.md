@@ -36,3 +36,11 @@ Para cada prefixo dá para definir nome, limite próprio ou "ignorar". Também e
 palavra no objeto, para os casos em que o processo não identifica o órgão.
 A ordem de prioridade é: regra por prefixo, depois regra por palavra, depois o limite padrão da UASG.
 Compras com valor sigiloso nunca são escondidas pelo limite.
+
+### Sugestão de limite (P80)
+
+Para cada prefixo, o sistema sugere como limite o **percentil 80** dos valores estimados das compras daquele
+órgão dentro da janela carregada (sigilosos ficam de fora). Com esse limite, só aparecem os ~20% maiores
+certames de cada órgão. Se o órgão tiver menos de 5 compras com valor conhecido, a sugestão usa o P80 da
+UASG inteira. Para mudar o percentil ou a amostra mínima, altere `PERCENTIL_SUGESTAO` e `AMOSTRA_MINIMA`
+em `server.py`.

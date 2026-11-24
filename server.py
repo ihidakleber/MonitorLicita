@@ -313,19 +313,46 @@ def listar(params):
     return out
 
 
+PERCENTIL_SUGESTAO = 80
+AMOSTRA_MINIMA = 5  # abaixo disso a sugestão do órgão herda o P80 da UASG
+
+
+def percentil(valores, p):
+    """Percentil com interpolação linear (mesmo método do Excel PERCENTIL.INC)."""
+    v = sorted(valores)
+    if not v:
+        return None
+    k = (len(v) - 1) * p / 100
+    i = int(k)
+    return v[i] if i + 1 >= len(v) else v[i] + (v[i + 1] - v[i]) * (k - i)
+
+
+def valor_comparavel(r):
+    """Valor estimado utilizável para estatística (exclui sigilosos/simbólicos)."""
+    v = r.get("valorTotalEstimado") or 0
+    if (r.get("orcamentoSigilosoCodigo") or 1) != 1 or v <= 1:
+        return None
+    return v
+
+
 def orgaos_detectados(uasg):
     """Agrupa as compras da UASG por prefixo de processo, para configurar alçadas."""
     agora = datetime.now().isoformat(timespec="seconds")
     with db() as con:
         rows = con.execute("SELECT dados FROM compra WHERE uasg=?", (uasg,)).fetchall()
         regras = [dict(r) for r in con.execute("SELECT * FROM regra WHERE uasg=?", (uasg,))]
-    grupos = {}
+    grupos, todos_valores = {}, []
     for row in rows:
         r = json.loads(row["dados"])
         pref = prefixo_processo(r.get("processo")) or "(sem processo)"
         g = grupos.setdefault(
-            pref, {"prefixo": pref, "qtd": 0, "andamento": 0, "valor": 0.0, "siglas": {}, "exemplo": None}
+            pref, {"prefixo": pref, "qtd": 0, "andamento": 0, "valor": 0.0, "siglas": {}, "exemplo": None,
+                   "valores": []}
         )
+        vc = valor_comparavel(r)
+        if vc is not None:
+            g["valores"].append(vc)
+            todos_valores.append(vc)
         g["qtd"] += 1
         g["valor"] += r.get("valorTotalEstimado") or 0
         if status_andamento(r, agora) in ANDAMENTO:
@@ -335,15 +362,32 @@ def orgaos_detectados(uasg):
             if s not in SIGLAS_IGNORADAS:
                 g["siglas"][s] = g["siglas"].get(s, 0) + 1
     regra_por_pref = {r["padrao"]: r for r in regras if r["tipo"] == "processo"}
+    p80_uasg = percentil(todos_valores, PERCENTIL_SUGESTAO)
     out = []
     for g in grupos.values():
+        vals = g.pop("valores")
+        g["amostra"] = len(vals)
+        g["mediana"] = percentil(vals, 50)
+        g["p80Proprio"] = percentil(vals, PERCENTIL_SUGESTAO)
+        # Amostra pequena: o percentil do órgão não é confiável, usa o da UASG.
+        if len(vals) >= AMOSTRA_MINIMA:
+            g["limiteSugerido"], g["baseSugestao"] = g["p80Proprio"], "órgão"
+        else:
+            g["limiteSugerido"], g["baseSugestao"] = p80_uasg, "UASG (amostra pequena)"
         sig = sorted(g["siglas"].items(), key=lambda kv: -kv[1])
         g["siglas"] = [s for s, _ in sig[:4]]
         g["sugestao"] = SUGESTOES_SEI_RO.get(g["prefixo"]) or (g["siglas"][0] if g["siglas"] else "")
         g["regra"] = regra_por_pref.get(g["prefixo"])
         out.append(g)
     out.sort(key=lambda g: -g["qtd"])
-    return {"grupos": out, "regras": regras}
+    return {
+        "grupos": out,
+        "regras": regras,
+        "percentil": PERCENTIL_SUGESTAO,
+        "amostraMinima": AMOSTRA_MINIMA,
+        "p80Uasg": p80_uasg,
+        "amostraUasg": len(todos_valores),
+    }
 
 
 # ----------------------------------------------------------------- Detalhe
