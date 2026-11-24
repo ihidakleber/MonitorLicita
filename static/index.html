@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de Licitações</title>
+<style>
+:root{
+  --bg:#f5f6f8;--card:#fff;--fg:#1c2430;--muted:#667085;--line:#e3e6eb;
+  --accent:#1f5fbf;--accent-bg:#e8f0fc;--ok:#147a43;--ok-bg:#e4f5eb;
+  --warn:#9a5b00;--warn-bg:#fdf1dc;--bad:#b3261e;--bad-bg:#fbe7e5;--gray-bg:#eef0f3;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#12161c;--card:#1a2029;--fg:#e6e9ee;--muted:#98a2b3;--line:#2a323d;
+  --accent:#7aa7f0;--accent-bg:#1c2b44;--ok:#6fcf97;--ok-bg:#16301f;--warn:#f0b35a;--warn-bg:#33270f;
+  --bad:#f28b82;--bad-bg:#3a1b19;--gray-bg:#232a34;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
+header h1{font-size:17px;margin:0 12px 0 0}
+nav button{background:none;border:0;padding:6px 10px;border-radius:6px;color:var(--muted);font:inherit;cursor:pointer}
+nav button.on{background:var(--accent-bg);color:var(--accent);font-weight:600}
+main{max-width:1280px;margin:0 auto;padding:16px 20px 60px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+input,select,button.b{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+button.b{cursor:pointer}
+button.b.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.b:disabled{opacity:.6;cursor:wait}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.kpi b{display:block;font-size:20px}
+.kpi span{color:var(--muted);font-size:12px}
+.list{display:flex;flex-direction:column;gap:8px}
+.lic{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;cursor:pointer}
+.lic:hover{border-color:var(--accent)}
+.lic .top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)}
+.lic .obj{margin:6px 0;font-size:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.lic.open .obj{-webkit-line-clamp:unset}
+.lic .meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+.lic .meta div span{color:var(--muted);font-size:11px;display:block}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;background:var(--gray-bg);color:var(--fg)}
+.c-org{background:var(--accent-bg);color:var(--accent)}
+.c-org.sug{border:1px dashed var(--accent);background:transparent}
+.c-rec{background:var(--ok-bg);color:var(--ok)}
+.c-agu{background:var(--accent-bg);color:var(--accent)}
+.c-jul{background:var(--warn-bg);color:var(--warn)}
+.c-sus{background:var(--bad-bg);color:var(--bad)}
+.c-novo{background:var(--bad);color:#fff}
+.urg{color:var(--bad);font-weight:600}
+.detail{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;cursor:default}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:800px){.grid2{grid-template-columns:1fr}}
+.detail h4{margin:10px 0 6px;font-size:13px}
+.detail a{color:var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td.n,th.n{text-align:right;white-space:nowrap}
+.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.card h3{margin:0 0 10px;font-size:15px}
+.err{background:var(--bad-bg);color:var(--bad);padding:8px 12px;border-radius:6px;margin-bottom:10px}
+.empty{padding:30px;text-align:center;color:var(--muted)}
+.scroll{max-height:340px;overflow:auto}
+td input{width:100%;padding:4px 6px}
+.small{font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Monitor de Licitações</h1>
+  <nav>
+    <button data-tab="lic" class="on">Licitações em andamento</button>
+    <button data-tab="cfg">UASGs e alçadas</button>
+  </nav>
+  <span style="flex:1"></span>
+  <button class="b pri" id="btnAtualizar">Atualizar dados</button>
+</header>
+<main>
+  <div id="erro"></div>
+
+  <section id="tab-lic">
+    <div class="bar">
+      <input id="fBusca" placeholder="Buscar no objeto, processo, nº…" style="flex:1;min-width:220px">
+      <select id="fUasg"><option value="">Todas as UASGs</option></select>
+      <select id="fOrgao"><option value="">Todos os órgãos</option></select>
+      <select id="fStatus">
+        <option value="">Todos os status em andamento</option>
+        <option value="recebendo_propostas">Recebendo propostas</option>
+        <option value="aguardando_abertura">Aguardando abertura</option>
+        <option value="em_julgamento">Em disputa / julgamento</option>
+        <option value="suspensa">Suspensa</option>
+      </select>
+      <select id="fModal"><option value="">Todas as modalidades</option></select>
+      <label class="small"><input type="checkbox" id="fLimite" checked> aplicar limite de alçada</label>
+      <select id="fOrdem">
+        <option value="enc">Ordenar: prazo de propostas</option>
+        <option value="valor">Ordenar: maior valor</option>
+        <option value="pub">Ordenar: publicação mais recente</option>
+      </select>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="list" id="lista"></div>
+  </section>
+
+  <section id="tab-cfg" hidden>
+    <div class="card">
+      <h3>UASGs monitoradas</h3>
+      <div class="bar">
+        <input id="nUasg" placeholder="Código UASG (ex.: 925373)" style="width:200px">
+        <input id="nLimite" placeholder="Limite padrão R$ (ex.: 100000)" style="width:220px">
+        <input id="nJanela" placeholder="Janela (dias)" value="180" style="width:110px">
+        <button class="b pri" id="btnAddUasg">Adicionar / salvar</button>
+      </div>
+      <table><thead><tr><th>UASG</th><th>Nome</th><th class="n">Limite padrão</th><th class="n">Janela</th><th>Última atualização</th><th></th></tr></thead>
+      <tbody id="tUasgs"></tbody></table>
+    </div>
+
+    <div class="card">
+      <h3>Alçada por órgão demandante</h3>
+      <p class="muted small" style="margin-top:0">
+        Quando a UASG é uma central de compras (ex.: SUPEL/RO), o órgão que pediu a compra aparece no
+        número do processo: no SEI de Rondônia, os 4 primeiros dígitos identificam a unidade
+        (<b>0036</b>.040015/2026-41 → SESAU). Aqui estão todos os prefixos encontrados nas compras da UASG.
+        Dê um nome, um limite próprio, ou marque para ignorar. Limite em branco = usa o limite padrão da UASG.
+        Os nomes com “?” são sugestões tiradas das siglas no texto do objeto; confirme antes de salvar.
+      </p>
+      <div class="bar"><select id="cfgUasg"></select></div>
+      <div class="scroll">
+      <table><thead><tr><th>Prefixo</th><th>Órgão (nome)</th><th class="n">Limite R$</th><th>Ignorar</th><th class="n">Compras</th><th class="n">Em andamento</th><th class="n">Valor total</th><th>Exemplo de objeto</th><th></th></tr></thead>
+      <tbody id="tOrgaos"></tbody></table>
+      </div>
+      <h4 style="margin:16px 0 6px">Regras por palavra no objeto</h4>
+      <p class="muted small" style="margin-top:0">Para quando o processo não identifica o órgão (ex.: atas compartilhadas): se o texto do objeto contiver a palavra, aplica a regra. Regras por prefixo têm prioridade.</p>
+      <div class="bar">
+        <input id="rTexto" placeholder="Palavra / sigla (ex.: SESAU)" style="width:200px">
+        <input id="rOrgao" placeholder="Nome do órgão" style="width:200px">
+        <input id="rLimite" placeholder="Limite R$" style="width:140px">
+        <label class="small"><input type="checkbox" id="rIgnorar"> ignorar</label>
+        <button class="b" id="btnAddTexto">Adicionar regra</button>
+      </div>
+      <table><tbody id="tTexto"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const brl = v => v == null ? '—' : Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL',maximumFractionDigits:0});
+const brl2 = v => v == null ? '—' : Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const dt = s => s ? new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = s => { if (s == null || s === '') return null; s = String(s).replace(/[R$\s]/g,''); if (s.includes(',')) s = s.replace(/\./g,'').replace(',','.'); const n = Number(s); return isNaN(n) ? null : n; };
+const STATUS = {
+  recebendo_propostas:['Recebendo propostas','c-rec'], aguardando_abertura:['Aguardando abertura','c-agu'],
+  em_julgamento:['Em disputa / julgamento','c-jul'], suspensa:['Suspensa','c-sus'],
+};
+let DADOS = [], aberto = null;
+
+async function api(url, opt={}) {
+  const r = await fetch(url, {headers:{'Content-Type':'application/json'}, ...opt, body: opt.body && JSON.stringify(opt.body)});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.erro || r.statusText);
+  return j;
+}
+function erro(e){ $('#erro').innerHTML = e ? `<div class="err">${esc(e.message||e)}</div>` : ''; }
+
+function prazo(l){
+  if (l.status === 'aguardando_abertura') return `abre ${dt(l.abertura)}`;
+  if (!l.encerramento) return '—';
+  const h = (new Date(l.encerramento) - Date.now())/36e5;
+  if (h < 0) return `encerrou ${dt(l.encerramento)}`;
+  const txt = h < 48 ? `${Math.round(h)} h` : `${Math.round(h/24)} dias`;
+  return `<span class="${h<72?'urg':''}">faltam ${txt}</span> · ${dt(l.encerramento)}`;
+}
+
+function filtrados(){
+  const b = $('#fBusca').value.toLowerCase(), u = $('#fUasg').value, o = $('#fOrgao').value,
+        s = $('#fStatus').value, m = $('#fModal').value;
+  let r = DADOS.filter(l => (!u || l.uasg===u) && (!o || l.orgao===o) && (!s || l.status===s) && (!m || l.modalidade===m)
+    && (!b || [l.objeto,l.processo,l.numero,l.orgao,l.informacaoComplementar].join(' ').toLowerCase().includes(b)));
+  const ord = $('#fOrdem').value;
+  if (ord==='valor') r.sort((a,b)=>b.valorEstimado-a.valorEstimado);
+  else if (ord==='pub') r.sort((a,b)=>(b.publicacao||'').localeCompare(a.publicacao||''));
+  return r;
+}
+
+function render(){
+  const r = filtrados();
+  const total = r.filter(l=>!l.sigiloso).reduce((s,l)=>s+l.valorEstimado,0);
+  const rec = r.filter(l=>l.status==='recebendo_propostas');
+  const urg = rec.filter(l=> (new Date(l.encerramento)-Date.now()) < 72*36e5).length;
+  $('#kpis').innerHTML = `
+    <div class="kpi"><b>${r.length}</b><span>licitações em andamento</span></div>
+    <div class="kpi"><b>${rec.length}</b><span>recebendo propostas${urg?` · <span class="urg">${urg} fecham em 72h</span>`:''}</span></div>
+    <div class="kpi"><b>${brl(total)}</b><span>valor estimado somado</span></div>
+    <div class="kpi"><b>${new Set(r.map(l=>l.orgao)).size}</b><span>órgãos demandantes</span></div>
+    <div class="kpi"><b>${r.filter(l=>l.novo).length}</b><span>novas (últimos 7 dias)</span></div>`;
+  if (!r.length) { $('#lista').innerHTML = `<div class="empty">${DADOS.length? 'Nenhuma licitação com esses filtros.' : 'Nenhum dado ainda. Cadastre uma UASG em “UASGs e alçadas” e clique em “Atualizar dados”.'}</div>`; return; }
+  $('#lista').innerHTML = r.map(l => {
+    const [st, cls] = STATUS[l.status] || [l.status,''];
+    return `<div class="lic ${aberto===l.id?'open':''}" data-id="${l.id}">
+      <div class="top">
+        ${l.novo?'<span class="chip c-novo">NOVA</span>':''}
+        <span class="chip c-org ${l.orgaoDefinido?'':'sug'}" title="${l.orgaoDefinido?'Órgão definido por regra':'Sugestão — confirme em UASGs e alçadas'}">${esc(l.orgao)}</span>
+        <span class="chip ${cls}">${st}</span>
+        <span>${esc(l.modalidade)} nº ${esc(l.numero)}</span>
+        ${l.srp?'<span class="chip">SRP</span>':''}
+        ${l.sigiloso?'<span class="chip c-jul" title="Valor estimado sigiloso: não é filtrado pelo limite">valor sigiloso</span>':''}
+        <span>· UASG ${esc(l.uasg)}</span>
+        <span>· Proc. ${esc(l.processo||'—')}</span>
+      </div>
+      <div class="obj">${esc(l.objeto)}</div>
+      <div class="meta">
+        <div><span>Valor estimado</span><b>${l.sigiloso?'sigiloso':brl(l.valorEstimado)}</b></div>
+        <div><span>Propostas</span>${prazo(l)}</div>
+        <div><span>Disputa</span>${esc(l.modoDisputa||'—')}</div>
+        <div><span>Publicação</span>${dt(l.publicacao)}</div>
+        <div><span>Limite aplicado (${l.origemLimite})</span>${brl(l.limiteAplicado)}</div>
+      </div>
+      ${aberto===l.id?'<div class="detail" id="det">Carregando detalhes do PNCP…</div>':''}
+    </div>`;}).join('');
+  if (aberto) carregarDetalhe(aberto);
+}
+
+async function carregarDetalhe(id){
+  const l = DADOS.find(x=>x.id===id); const el = $('#det'); if (!el) return;
+  try {
+    const d = await api(`/api/licitacoes/${id}`);
+    const cont = o => Object.entries(o).map(([k,v])=>`${esc(k)}: <b>${v}</b>`).join(' · ') || '—';
+    el.innerHTML = `
+      <div class="grid2">
+        <div>
+          <h4>Links</h4>
+          <a href="${l.linkPncp}" target="_blank">Edital no PNCP</a> ·
+          <a href="${d.linkSistemaOrigem||l.linkCompras}" target="_blank">Acompanhar no Compras.gov.br</a>
+          ${d.linkProcessoEletronico?` · <a href="${d.linkProcessoEletronico}" target="_blank">Processo eletrônico (SEI)</a>`:''}
+          <h4>Enquadramento</h4>
+          <div>${esc(l.amparo)} — <span class="muted">${esc(l.amparoDescricao||'')}</span></div>
+          <div>Instrumento: ${esc(l.instrumento)} · Situação PNCP: ${esc(l.situacao)}</div>
+          <div>Abertura: ${dt(l.abertura)} · Encerramento: ${dt(l.encerramento)}</div>
+          <div>Fontes de recurso: ${esc(d.fontesOrcamentarias.join(', ')||'—')}${d.emendaParlamentar?' · emenda parlamentar':''}</div>
+          <div>Controle PNCP: ${esc(l.numeroControlePNCP)}</div>
+        </div>
+        <div>
+          <h4>Perfil dos itens (${d.qtdItens})</h4>
+          <div>Material: <b>${d.tipos.M||0}</b> · Serviço: <b>${d.tipos.S||0}</b></div>
+          <div>Benefício: ${cont(d.beneficios)}</div>
+          <div>Critério: ${cont(d.criterios)}</div>
+          ${l.informacaoComplementar?`<h4>Informação complementar</h4><div class="small">${esc(l.informacaoComplementar)}</div>`:''}
+        </div>
+      </div>
+      <h4>Itens</h4>
+      <div class="scroll"><table><thead><tr><th>#</th><th>Descrição</th><th class="n">Qtd</th><th>Un.</th><th class="n">Unitário</th><th class="n">Total</th><th>Benefício</th><th>Situação</th></tr></thead><tbody>
+      ${d.itens.map(i=>`<tr><td>${i.numero}</td><td>${esc(i.descricao)}</td><td class="n">${Number(i.quantidade||0).toLocaleString('pt-BR')}</td><td>${esc(i.unidade)}</td><td class="n">${i.sigiloso?'sigiloso':brl2(i.valorUnitario)}</td><td class="n">${i.sigiloso?'—':brl2(i.valorTotal)}</td><td class="small">${esc(i.beneficio)}</td><td class="small">${esc(i.situacao)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="grid2">
+        <div><h4>Documentos (${d.arquivos.length})</h4>
+          ${d.arquivos.map(a=>`<div class="small">${a.ativo?'':'<s>'}<a href="${a.url}" target="_blank">${esc(a.titulo)}</a>${a.ativo?'':'</s>'} <span class="muted">— ${esc(a.tipo)}, ${dt(a.data)}</span></div>`).join('')||'<span class="muted">nenhum</span>'}
+        </div>
+        <div><h4>Histórico / retificações</h4>
+          ${d.eventos.slice(0,12).map(e=>`<div class="small">${dt(e.data)} — ${esc(e.tipo)} ${esc(e.categoria)} ${e.documento?'· '+esc(e.documento):''} ${e.justificativa?'<span class="muted">('+esc(e.justificativa)+')</span>':''}</div>`).join('')||'<span class="muted">sem alterações</span>'}
+        </div>
+      </div>`;
+  } catch(e){ el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+async function carregar(){
+  erro();
+  try {
+    DADOS = await api(`/api/licitacoes?limite=${$('#fLimite').checked?1:0}`);
+    const opts = (sel, vals, first) => { const cur = $(sel).value; $(sel).innerHTML = `<option value="">${first}</option>` + [...new Set(vals)].filter(Boolean).sort().map(v=>`<option ${v===cur?'selected':''}>${esc(v)}</option>`).join(''); };
+    opts('#fOrgao', DADOS.map(l=>l.orgao), 'Todos os órgãos');
+    opts('#fModal', DADOS.map(l=>l.modalidade), 'Todas as modalidades');
+    opts('#fUasg', DADOS.map(l=>l.uasg), 'Todas as UASGs');
+    render();
+  } catch(e){ erro(e); }
+}
+
+// --------------------------------------------------------------- config
+async function carregarUasgs(){
+  const us = await api('/api/uasgs');
+  $('#tUasgs').innerHTML = us.map(u=>`<tr><td><b>${u.codigo}</b></td><td>${esc(u.nome||'(atualize para carregar)')}</td><td class="n">${brl(u.limite_padrao)}</td><td class="n">${u.janela_dias} d</td><td>${dt(u.ultima_atualizacao)}</td>
+    <td><button class="b" onclick="editarUasg('${u.codigo}',${u.limite_padrao},${u.janela_dias})">editar</button> <button class="b" onclick="removerUasg('${u.codigo}')">remover</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">Nenhuma UASG cadastrada.</td></tr>';
+  const cur = $('#cfgUasg').value;
+  $('#cfgUasg').innerHTML = us.map(u=>`<option value="${u.codigo}" ${u.codigo===cur?'selected':''}>${u.codigo} — ${esc(u.nome||'')}</option>`).join('');
+  return us;
+}
+window.editarUasg = (c,l,j)=>{ $('#nUasg').value=c; $('#nLimite').value=l; $('#nJanela').value=j; };
+window.removerUasg = async c => { if (!confirm(`Remover UASG ${c} e suas regras?`)) return; await api(`/api/uasgs/${c}`,{method:'DELETE'}); await carregarUasgs(); carregarOrgaos(); carregar(); };
+
+async function carregarOrgaos(){
+  const u = $('#cfgUasg').value; if (!u) { $('#tOrgaos').innerHTML=''; $('#tTexto').innerHTML=''; return; }
+  const d = await api(`/api/uasgs/${u}/orgaos`);
+  $('#tOrgaos').innerHTML = d.grupos.map(g=>{
+    const r = g.regra;
+    return `<tr data-pref="${esc(g.prefixo)}">
+      <td><b>${esc(g.prefixo)}</b></td>
+      <td><input class="o" value="${esc(r?r.orgao:'')}" placeholder="${esc(g.sugestao?g.sugestao+'?':'')}" title="Siglas no texto: ${esc(g.siglas.join(', '))}"></td>
+      <td><input class="l" value="${r&&r.limite!=null?r.limite:''}" placeholder="padrão" style="width:110px"></td>
+      <td><input type="checkbox" class="i" ${r&&r.ignorar?'checked':''}></td>
+      <td class="n">${g.qtd}</td><td class="n">${g.andamento}</td><td class="n">${brl(g.valor)}</td>
+      <td class="small muted">${esc(g.exemplo)}</td>
+      <td><button class="b" onclick="salvarPref(this)">${r?'salvar':'criar'}</button>${r?` <button class="b" onclick="delRegra(${r.id})">×</button>`:''}</td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="muted">Sem compras carregadas para esta UASG. Clique em “Atualizar dados”.</td></tr>';
+  $('#tTexto').innerHTML = d.regras.filter(r=>r.tipo==='texto').map(r=>`<tr><td>contém “<b>${esc(r.padrao)}</b>”</td><td>→ ${esc(r.orgao)}</td><td class="n">${r.limite!=null?brl(r.limite):'limite padrão'}</td><td>${r.ignorar?'ignorar':''}</td><td><button class="b" onclick="delRegra(${r.id})">remover</button></td></tr>`).join('')
+    || '<tr><td class="muted">Nenhuma regra por palavra.</td></tr>';
+}
+window.salvarPref = async btn => {
+  const tr = btn.closest('tr'), o = tr.querySelector('.o');
+  try {
+    await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'processo',padrao:tr.dataset.pref,
+      orgao:o.value || o.placeholder.replace('?','') || tr.dataset.pref, limite:num(tr.querySelector('.l').value), ignorar:tr.querySelector('.i').checked}});
+    await carregarOrgaos(); carregar();
+  } catch(e){ erro(e); }
+};
+window.delRegra = async id => { await api(`/api/regras/${id}`,{method:'DELETE'}); await carregarOrgaos(); carregar(); };
+
+$('#btnAddTexto').onclick = async () => {
+  try {
+    await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'texto',padrao:$('#rTexto').value,orgao:$('#rOrgao').value||$('#rTexto').value,limite:num($('#rLimite').value),ignorar:$('#rIgnorar').checked}});
+    $('#rTexto').value=$('#rOrgao').value=$('#rLimite').value=''; await carregarOrgaos(); carregar();
+  } catch(e){ erro(e); }
+};
+$('#btnAddUasg').onclick = async () => {
+  try {
+    const r = await api('/api/uasgs',{method:'POST',body:{codigo:$('#nUasg').value,limite_padrao:num($('#nLimite').value)||0,janela_dias:Number($('#nJanela').value)||180}});
+    $('#nUasg').value=$('#nLimite').value=''; await carregarUasgs(); $('#cfgUasg').value=r.codigo;
+    await atualizar([r.codigo]);
+  } catch(e){ erro(e); }
+};
+$('#cfgUasg').onchange = carregarOrgaos;
+
+async function atualizar(codigos){
+  const btn = $('#btnAtualizar'); btn.disabled = true; erro();
+  try {
+    codigos = codigos || (await api('/api/uasgs')).map(u=>u.codigo);
+    for (const c of codigos) { btn.textContent = `Atualizando ${c}…`; await api(`/api/uasgs/${c}/atualizar`,{method:'POST'}); }
+    await carregarUasgs(); await carregarOrgaos(); await carregar();
+  } catch(e){ erro(e); }
+  btn.disabled = false; btn.textContent = 'Atualizar dados';
+}
+$('#btnAtualizar').onclick = () => atualizar();
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on', x===b));
+  $('#tab-lic').hidden = b.dataset.tab!=='lic'; $('#tab-cfg').hidden = b.dataset.tab!=='cfg';
+});
+['#fBusca','#fUasg','#fOrgao','#fStatus','#fModal','#fOrdem'].forEach(s=>$(s).addEventListener('input', render));
+$('#fLimite').onchange = carregar;
+$('#lista').addEventListener('click', e => {
+  if (e.target.closest('.detail')) return;
+  const c = e.target.closest('.lic'); if (!c) return;
+  aberto = aberto===c.dataset.id ? null : c.dataset.id; render();
+});
+
+(async () => { const us = await carregarUasgs(); await carregarOrgaos(); await carregar(); })();
+</script>
+</body>
+</html>
