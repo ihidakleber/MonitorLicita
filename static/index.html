@@ -95,7 +95,7 @@ td input{width:100%;padding:4px 6px}
       <select id="fModal"><option value="">Todas as modalidades</option></select>
       <label class="small"><input type="checkbox" id="fLimite" checked> aplicar limite de alçada</label>
       <select id="fOrdem">
-        <option value="enc">Ordenar: prazo de propostas</option>
+        <option value="enc">Ordenar: abertas primeiro, por prazo</option>
         <option value="valor">Ordenar: maior valor</option>
         <option value="pub">Ordenar: publicação mais recente</option>
       </select>
@@ -109,33 +109,39 @@ td input{width:100%;padding:4px 6px}
       <h3>UASGs monitoradas</h3>
       <div class="bar">
         <input id="nUasg" placeholder="Código UASG (ex.: 925373)" style="width:200px">
-        <input id="nLimite" placeholder="Limite padrão R$ (ex.: 100000)" style="width:220px">
-        <input id="nJanela" placeholder="Janela (dias)" value="180" style="width:110px">
+        <input id="nLimite" placeholder="Limite padrão / piso R$" style="width:220px">
+        <input id="nJanela" placeholder="Janela (dias)" value="365" style="width:110px" title="Histórico usado para calcular porte e réguas">
         <button class="b pri" id="btnAddUasg">Adicionar / salvar</button>
       </div>
-      <table><thead><tr><th>UASG</th><th>Nome</th><th class="n">Limite padrão</th><th class="n">Janela</th><th>Última atualização</th><th></th></tr></thead>
+      <table><thead><tr><th>UASG</th><th>Nome</th><th>Alçada</th><th class="n">Limite padrão / piso</th><th class="n">Janela</th><th>Última atualização</th><th></th></tr></thead>
       <tbody id="tUasgs"></tbody></table>
     </div>
 
     <div class="card">
-      <h3>Alçada por órgão demandante</h3>
+      <h3>Alçada por porte do órgão demandante</h3>
+      <div class="bar"><select id="cfgUasg"></select></div>
       <p class="muted small" style="margin-top:0">
-        Quando a UASG é uma central de compras (ex.: SUPEL/RO), o órgão que pediu a compra aparece no
-        número do processo: no SEI de Rondônia, os 4 primeiros dígitos identificam a unidade
-        (<b>0036</b>.040015/2026-41 → SESAU). Aqui estão todos os prefixos encontrados nas compras da UASG.
-        Dê um nome, um limite próprio, ou marque para ignorar. Limite em branco = usa o limite padrão da UASG.
-        Os nomes com “?” são sugestões tiradas das siglas no texto do objeto; confirme antes de salvar.
-        <br><b>Sugestão de limite (P80):</b> o valor abaixo do qual estão 80% das compras do órgão na janela
-        carregada. Com esse limite, você vê apenas os ~20% maiores certames daquele órgão. Se o órgão tem menos de
-        <span id="amMin">5</span> compras com valor conhecido, a sugestão usa o P80 da UASG inteira.
+        <b>Como funciona.</b> (1) O órgão demandante é identificado pelo prefixo do processo (SEI-RO: <b>0036</b>.040015/2026-41 → SESAU).
+        (2) Os órgãos são ordenados pelo volume estimado na janela e divididos em tercis: <b>Grande, Médio e Pequeno</b>.
+        (3) Para cada porte, a régua é o corte da <b>curva ABC</b>: entram as maiores compras que, somadas, formam X% do valor daquela classe.
+        (4) <b>Garantia:</b> se a régua do porte ficar acima da maior compra de um órgão, a régua dele cai para essa maior compra, assim nenhum órgão fica sem análise.
+        (5) <b>Piso:</b> nenhuma régua fica abaixo do limite padrão da UASG (materialidade mínima). Um limite manual no órgão sempre prevalece.
       </p>
-      <div class="bar"><select id="cfgUasg"></select>
-        <span id="p80Uasg" class="small"></span>
-        <span style="flex:1"></span>
-        <button class="b" id="btnAplicarTodos" title="Cria regras com o limite sugerido para todos os prefixos que ainda não têm limite próprio">Aplicar sugestão P80 a todos sem limite</button>
+      <div class="bar">
+        <label class="small">Modo <select id="aModo"><option value="porte_abc">Régua por porte + curva ABC</option><option value="fixo">Limite fixo (padrão da UASG)</option></select></label>
+        <label class="small">Corte ABC <input id="aCorte" style="width:60px"> %</label>
+        <label class="small"><input type="checkbox" id="aGarantia"> garantia por órgão</label>
+        <button class="b pri" id="btnSalvarAlcada">Salvar alçada</button>
       </div>
-      <div class="scroll">
-      <table><thead><tr><th>Prefixo</th><th>Órgão (nome)</th><th class="n">Limite R$</th><th class="n" title="Percentil 80 dos valores estimados das compras do órgão: só aparecem os 20% maiores">Sugestão (P80)</th><th>Ignorar</th><th class="n">Compras</th><th class="n">Em andamento</th><th class="n">Valor total</th><th>Exemplo de objeto</th><th></th></tr></thead>
+      <div class="kpis" id="reguas"></div>
+      <h4 style="margin:6px 0">Simulação sobre o histórico da janela</h4>
+      <div class="scroll" style="max-height:none"><table><thead><tr><th>Corte ABC</th><th>Garantia</th><th class="n">Réguas G / M / P</th><th class="n">Compras selecionadas</th><th class="n">Valor coberto</th><th class="n">Órgãos sem nada</th><th class="n">Em andamento hoje</th><th></th></tr></thead>
+      <tbody id="tSim"></tbody></table></div>
+
+      <h4 style="margin:16px 0 6px">Órgãos demandantes</h4>
+      <p class="muted small" style="margin-top:0">Porte “auto” vem do tercil de volume; dá para forçar outro. Os nomes com “?” são sugestões a partir das siglas do objeto. Limite manual em branco = usa a régua automática.</p>
+      <div class="scroll" style="max-height:520px">
+      <table><thead><tr><th>Prefixo</th><th>Órgão</th><th>Porte</th><th class="n">Régua automática</th><th class="n">Limite manual R$</th><th>Ignorar</th><th class="n">Compras</th><th class="n">Volume na janela</th><th class="n">Maior compra</th><th class="n">Em andamento (acima da régua / total)</th><th>Exemplo de objeto</th><th></th></tr></thead>
       <tbody id="tOrgaos"></tbody></table>
       </div>
       <h4 style="margin:16px 0 6px">Regras por palavra no objeto</h4>
@@ -188,7 +194,12 @@ function filtrados(){
   let r = DADOS.filter(l => (!u || l.uasg===u) && (!o || l.orgao===o) && (!s || l.status===s) && (!m || l.modalidade===m)
     && (!b || [l.objeto,l.processo,l.numero,l.orgao,l.informacaoComplementar].join(' ').toLowerCase().includes(b)));
   const ord = $('#fOrdem').value;
-  if (ord==='valor') r.sort((a,b)=>b.valorEstimado-a.valorEstimado);
+  const PRI = {recebendo_propostas:0, aguardando_abertura:1, em_julgamento:2, suspensa:3};
+  if (ord==='enc') r.sort((a,b)=> (PRI[a.status]-PRI[b.status]) ||
+      (a.status==='recebendo_propostas' || a.status==='aguardando_abertura'
+        ? (a.encerramento||'').localeCompare(b.encerramento||'')   // abertas: prazo mais próximo primeiro
+        : (b.encerramento||'').localeCompare(a.encerramento||''))); // demais: mais recentes primeiro
+  else if (ord==='valor') r.sort((a,b)=>b.valorEstimado-a.valorEstimado);
   else if (ord==='pub') r.sort((a,b)=>(b.publicacao||'').localeCompare(a.publicacao||''));
   return r;
 }
@@ -210,6 +221,7 @@ function render(){
     return `<div class="lic ${aberto===l.id?'open':''}" data-id="${l.id}">
       <div class="top">
         ${l.novo?'<span class="chip c-novo">NOVA</span>':''}
+        ${l.porte?`<span class="chip" title="Porte do órgão demandante">${PORTE[l.porte]}</span>`:''}
         <span class="chip c-org ${l.orgaoDefinido?'':'sug'}" title="${l.orgaoDefinido?'Órgão definido por regra':'Sugestão — confirme em UASGs e alçadas'}">${esc(l.orgao)}</span>
         <span class="chip ${cls}">${st}</span>
         <span>${esc(l.modalidade)} nº ${esc(l.numero)}</span>
@@ -224,7 +236,7 @@ function render(){
         <div><span>Propostas</span>${prazo(l)}</div>
         <div><span>Disputa</span>${esc(l.modoDisputa||'—')}</div>
         <div><span>Publicação</span>${dt(l.publicacao)}</div>
-        <div><span>Limite aplicado (${l.origemLimite})</span>${brl(l.limiteAplicado)}</div>
+        <div><span>Régua aplicada</span>${brl(l.limiteAplicado)} <span class="muted small" style="display:inline">${esc(l.origemLimite)}</span></div>
       </div>
       ${aberto===l.id?'<div class="detail" id="det">Carregando detalhes do PNCP…</div>':''}
     </div>`;}).join('');
@@ -286,64 +298,69 @@ async function carregar(){
 }
 
 // --------------------------------------------------------------- config
+const PORTE = {G:'Grande', M:'Médio', P:'Pequeno'};
+let ORG = null, UASGS = [];
 async function carregarUasgs(){
-  const us = await api('/api/uasgs');
-  $('#tUasgs').innerHTML = us.map(u=>`<tr><td><b>${u.codigo}</b></td><td>${esc(u.nome||'(atualize para carregar)')}</td><td class="n">${brl(u.limite_padrao)}</td><td class="n">${u.janela_dias} d</td><td>${dt(u.ultima_atualizacao)}</td>
-    <td><button class="b" onclick="editarUasg('${u.codigo}',${u.limite_padrao},${u.janela_dias})">editar</button> <button class="b" onclick="removerUasg('${u.codigo}')">remover</button></td></tr>`).join('')
-    || '<tr><td colspan="6" class="muted">Nenhuma UASG cadastrada.</td></tr>';
+  UASGS = await api('/api/uasgs');
+  $('#tUasgs').innerHTML = UASGS.map(u=>`<tr><td><b>${u.codigo}</b></td><td>${esc(u.nome||'(atualize para carregar)')}</td>
+    <td class="small">${u.modo_alcada==='porte_abc'?`porte + ABC ${u.corte_abc}%${u.garantia?' + garantia':''}`:'limite fixo'}</td>
+    <td class="n">${brl(u.limite_padrao)}</td><td class="n">${u.janela_dias} d</td><td>${dt(u.ultima_atualizacao)}</td>
+    <td><button class="b" onclick="editarUasg('${u.codigo}')">editar</button> <button class="b" onclick="removerUasg('${u.codigo}')">remover</button></td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">Nenhuma UASG cadastrada.</td></tr>';
   const cur = $('#cfgUasg').value;
-  $('#cfgUasg').innerHTML = us.map(u=>`<option value="${u.codigo}" ${u.codigo===cur?'selected':''}>${u.codigo} — ${esc(u.nome||'')}</option>`).join('');
-  return us;
+  $('#cfgUasg').innerHTML = UASGS.map(u=>`<option value="${u.codigo}" ${u.codigo===cur?'selected':''}>${u.codigo} — ${esc(u.nome||'')}</option>`).join('');
+  return UASGS;
 }
-window.editarUasg = (c,l,j)=>{ $('#nUasg').value=c; $('#nLimite').value=l; $('#nJanela').value=j; };
+window.editarUasg = c => { const u = UASGS.find(x=>x.codigo===c); $('#nUasg').value=c; $('#nLimite').value=u.limite_padrao; $('#nJanela').value=u.janela_dias; };
 window.removerUasg = async c => { if (!confirm(`Remover UASG ${c} e suas regras?`)) return; await api(`/api/uasgs/${c}`,{method:'DELETE'}); await carregarUasgs(); carregarOrgaos(); carregar(); };
 
+const pct = x => (x*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%';
 async function carregarOrgaos(){
-  const u = $('#cfgUasg').value; if (!u) { $('#tOrgaos').innerHTML=''; $('#tTexto').innerHTML=''; return; }
-  const d = await api(`/api/uasgs/${u}/orgaos`);
-  ORG = d;
-  $('#amMin').textContent = d.amostraMinima;
-  $('#p80Uasg').innerHTML = d.p80Uasg!=null ? `P80 da UASG: <b>${brl(d.p80Uasg)}</b> <span class="muted">(${d.amostraUasg} compras)</span>
-    <button class="b small" onclick="usarP80Uasg()">usar como limite padrão</button>` : '';
+  const u = $('#cfgUasg').value; if (!u) { $('#tOrgaos').innerHTML=''; $('#tTexto').innerHTML=''; $('#tSim').innerHTML=''; $('#reguas').innerHTML=''; return; }
+  const d = ORG = await api(`/api/uasgs/${u}/orgaos`);
+  const ua = d.uasg, auto = ua.modo_alcada==='porte_abc';
+  $('#aModo').value = ua.modo_alcada; $('#aCorte').value = ua.corte_abc; $('#aGarantia').checked = !!ua.garantia;
+  $('#reguas').innerHTML = ['G','M','P'].map(k=>`<div class="kpi"><b>${brl(d.regua[k])}</b><span>régua porte ${PORTE[k]} · ${d.orgaosPorClasse[k]} órgãos</span></div>`).join('')
+    + `<div class="kpi"><b>${d.resumo.selecionadas} / ${d.resumo.compras}</b><span>compras da janela acima da régua · ${pct(d.resumo.valorCoberto)} do valor</span></div>`
+    + `<div class="kpi"><b>${d.resumo.orgaosSemNada}</b><span>órgãos sem nenhuma compra analisada</span></div>`
+    + (auto?'':`<div class="kpi"><b class="urg">inativo</b><span>modo limite fixo: a régua acima é só simulação</span></div>`);
+  $('#tSim').innerHTML = d.simulacao.map(s=>{
+    const atual = auto && s.corte===ua.corte_abc && s.garantia===!!ua.garantia;
+    return `<tr style="${atual?'background:var(--accent-bg)':''}"><td>${s.corte}%</td><td>${s.garantia?'sim':'não'}</td>
+    <td class="n small">${['G','M','P'].map(k=>brl(s.regua[k])).join(' / ')}</td>
+    <td class="n">${s.selecionadas} (${pct(s.selecionadas/s.compras)})</td><td class="n">${pct(s.valorCoberto)}</td>
+    <td class="n ${s.orgaosSemNada?'urg':''}">${s.orgaosSemNada}</td><td class="n">${s.emAndamento}</td>
+    <td>${atual?'<b class="small">atual</b>':`<button class="b small" onclick="usarSim(${s.corte},${s.garantia})">usar</button>`}</td></tr>`;}).join('');
   $('#tOrgaos').innerHTML = d.grupos.map(g=>{
-    const r = g.regra;
+    const r = g.regra, pManual = r && r.porte;
     return `<tr data-pref="${esc(g.prefixo)}">
       <td><b>${esc(g.prefixo)}</b></td>
-      <td><input class="o" value="${esc(r?r.orgao:'')}" placeholder="${esc(g.sugestao?g.sugestao+'?':'')}" title="Siglas no texto: ${esc(g.siglas.join(', '))}"></td>
-      <td><input class="l" value="${r&&r.limite!=null?r.limite:''}" placeholder="padrão" style="width:110px"></td>
-      <td class="n" title="Mediana: ${brl(g.mediana)} · P80 próprio: ${brl(g.p80Proprio)} · base: ${esc(g.baseSugestao)}">
-        ${g.limiteSugerido!=null?`<b>${brl(g.limiteSugerido)}</b><div class="muted small">${g.baseSugestao==='órgão'?'P80 do órgão':'P80 da UASG'} · n=${g.amostra}</div>
-        <button class="b small" onclick="usarSug(this, ${Math.round(g.limiteSugerido)})">usar</button>`:'<span class="muted">sem dados</span>'}</td>
+      <td><input class="o" value="${esc(r?r.orgao:'')}" placeholder="${esc(g.sugestao?g.sugestao+'?':'')}" title="Siglas no texto: ${esc(g.siglas.join(', '))}" style="width:110px"></td>
+      <td><select class="p"><option value="">auto${!pManual&&g.porte?' ('+PORTE[g.porte]+')':''}</option>${['G','M','P'].map(k=>`<option value="${k}" ${pManual===k?'selected':''}>${PORTE[k]}</option>`).join('')}</select></td>
+      <td class="n">${g.limiteAuto!=null?`<b>${brl(g.limiteAuto)}</b>${g.garantido?'<div class="small" style="color:var(--warn)" title="A régua do porte estava acima da maior compra deste órgão">garantia</div>':''}`:'<span class="muted">sem dados</span>'}</td>
+      <td><input class="l" value="${r&&r.limite!=null?r.limite:''}" placeholder="auto" style="width:110px"></td>
       <td><input type="checkbox" class="i" ${r&&r.ignorar?'checked':''}></td>
-      <td class="n">${g.qtd}</td><td class="n">${g.andamento}</td><td class="n">${brl(g.valor)}</td>
-      <td class="small muted">${esc(g.exemplo)}</td>
+      <td class="n">${g.qtd}</td><td class="n">${brl(g.valor)}</td><td class="n">${brl(g.maior)}</td>
+      <td class="n">${g.andamentoAcima} / ${g.andamento}</td>
+      <td class="small muted" style="min-width:260px" title="${esc(g.exemplo)}">${esc((g.exemplo||'').slice(0,110))}${(g.exemplo||'').length>110?'…':''}</td>
       <td><button class="b" onclick="salvarPref(this)">${r?'salvar':'criar'}</button>${r?` <button class="b" onclick="delRegra(${r.id})">×</button>`:''}</td></tr>`;
-  }).join('') || '<tr><td colspan="10" class="muted">Sem compras carregadas para esta UASG. Clique em “Atualizar dados”.</td></tr>';
-  $('#tTexto').innerHTML = d.regras.filter(r=>r.tipo==='texto').map(r=>`<tr><td>contém “<b>${esc(r.padrao)}</b>”</td><td>→ ${esc(r.orgao)}</td><td class="n">${r.limite!=null?brl(r.limite):'limite padrão'}</td><td>${r.ignorar?'ignorar':''}</td><td><button class="b" onclick="delRegra(${r.id})">remover</button></td></tr>`).join('')
+  }).join('') || '<tr><td colspan="12" class="muted">Sem compras carregadas para esta UASG. Clique em “Atualizar dados”.</td></tr>';
+  $('#tTexto').innerHTML = d.regras.filter(r=>r.tipo==='texto').map(r=>`<tr><td>contém “<b>${esc(r.padrao)}</b>”</td><td>→ ${esc(r.orgao)}</td><td class="n">${r.limite!=null?brl(r.limite):'régua automática'}</td><td>${r.ignorar?'ignorar':''}</td><td><button class="b" onclick="delRegra(${r.id})">remover</button></td></tr>`).join('')
     || '<tr><td class="muted">Nenhuma regra por palavra.</td></tr>';
 }
+async function salvarAlcada(body){
+  const u = UASGS.find(x=>x.codigo===$('#cfgUasg').value);
+  try { await api('/api/uasgs',{method:'POST',body:{codigo:u.codigo,limite_padrao:u.limite_padrao,janela_dias:u.janela_dias,...body}});
+    await carregarUasgs(); await carregarOrgaos(); carregar(); } catch(e){ erro(e); }
+}
+window.usarSim = (c,g) => salvarAlcada({modo_alcada:'porte_abc',corte_abc:c,garantia:g?1:0});
+$('#btnSalvarAlcada').onclick = () => salvarAlcada({modo_alcada:$('#aModo').value,corte_abc:Number($('#aCorte').value)||80,garantia:$('#aGarantia').checked?1:0});
 window.salvarPref = async btn => {
   const tr = btn.closest('tr'), o = tr.querySelector('.o');
   try {
     await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'processo',padrao:tr.dataset.pref,
-      orgao:o.value || o.placeholder.replace('?','') || tr.dataset.pref, limite:num(tr.querySelector('.l').value), ignorar:tr.querySelector('.i').checked}});
-    await carregarOrgaos(); carregar();
-  } catch(e){ erro(e); }
-};
-let ORG = null;
-window.usarSug = (btn, v) => { const tr = btn.closest('tr'); tr.querySelector('.l').value = v; salvarPref(tr.querySelector('td:last-child button')); };
-window.usarP80Uasg = async () => {
-  const u = (await api('/api/uasgs')).find(x=>x.codigo===$('#cfgUasg').value);
-  await api('/api/uasgs',{method:'POST',body:{codigo:u.codigo,limite_padrao:Math.round(ORG.p80Uasg),janela_dias:u.janela_dias}});
-  await carregarUasgs(); carregar();
-};
-$('#btnAplicarTodos').onclick = async () => {
-  const alvo = ORG.grupos.filter(g => g.limiteSugerido!=null && !(g.regra && g.regra.limite!=null) && !(g.regra && g.regra.ignorar));
-  if (!alvo.length) return alert('Todos os prefixos já têm limite próprio.');
-  if (!confirm(`Criar/atualizar limite P80 para ${alvo.length} prefixos sem limite próprio?`)) return;
-  try {
-    for (const g of alvo) await api('/api/regras',{method:'POST',body:{uasg:$('#cfgUasg').value,tipo:'processo',padrao:g.prefixo,
-      orgao:(g.regra&&g.regra.orgao)||g.sugestao||g.prefixo,limite:Math.round(g.limiteSugerido),ignorar:false}});
+      orgao:o.value || o.placeholder.replace('?','') || tr.dataset.pref, limite:num(tr.querySelector('.l').value),
+      ignorar:tr.querySelector('.i').checked, porte:tr.querySelector('.p').value||null}});
     await carregarOrgaos(); carregar();
   } catch(e){ erro(e); }
 };
@@ -357,7 +374,7 @@ $('#btnAddTexto').onclick = async () => {
 };
 $('#btnAddUasg').onclick = async () => {
   try {
-    const r = await api('/api/uasgs',{method:'POST',body:{codigo:$('#nUasg').value,limite_padrao:num($('#nLimite').value)||0,janela_dias:Number($('#nJanela').value)||180}});
+    const r = await api('/api/uasgs',{method:'POST',body:{codigo:$('#nUasg').value,limite_padrao:num($('#nLimite').value),janela_dias:Number($('#nJanela').value)||365}});
     $('#nUasg').value=$('#nLimite').value=''; await carregarUasgs(); $('#cfgUasg').value=r.codigo;
     await atualizar([r.codigo]);
   } catch(e){ erro(e); }

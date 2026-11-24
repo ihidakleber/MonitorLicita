@@ -37,10 +37,18 @@ palavra no objeto, para os casos em que o processo não identifica o órgão.
 A ordem de prioridade é: regra por prefixo, depois regra por palavra, depois o limite padrão da UASG.
 Compras com valor sigiloso nunca são escondidas pelo limite.
 
-### Sugestão de limite (P80)
+### Régua por porte + curva ABC (modo padrão)
 
-Para cada prefixo, o sistema sugere como limite o **percentil 80** dos valores estimados das compras daquele
-órgão dentro da janela carregada (sigilosos ficam de fora). Com esse limite, só aparecem os ~20% maiores
-certames de cada órgão. Se o órgão tiver menos de 5 compras com valor conhecido, a sugestão usa o P80 da
-UASG inteira. Para mudar o percentil ou a amostra mínima, altere `PERCENTIL_SUGESTAO` e `AMOSTRA_MINIMA`
-em `server.py`.
+1. **Porte:** os órgãos são ordenados pelo volume estimado na janela (padrão de 365 dias) e divididos em
+   tercis: Grande, Médio e Pequeno. O porte de qualquer órgão pode ser trocado manualmente.
+2. **Régua da classe:** é o corte da curva ABC das compras de todos os órgãos do porte. Entram as maiores
+   compras que, somadas, chegam a X% do valor da classe (padrão de 80%).
+3. **Garantia:** se a régua do porte ficar acima da maior compra de um órgão, a régua dele cai para essa
+   maior compra. Assim nenhum órgão fica sem análise.
+4. **Piso:** nenhuma régua fica abaixo do limite padrão da UASG (materialidade mínima).
+5. Um limite manual no órgão sempre prevalece.
+
+A tela de alçadas mostra uma simulação dos cortes de 70%, 80%, 90% e 95%, com e sem garantia. Para cada um
+ela informa as compras selecionadas, o valor coberto, quantos órgãos ficam sem nenhuma análise e quantas
+licitações em andamento passam pela régua.
+O modo "limite fixo" continua disponível e aplica apenas o limite padrão da UASG.

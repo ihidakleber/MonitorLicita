@@ -32,7 +32,7 @@ PNCP = "https://pncp.gov.br/api"
 # codigoModalidade aceito pela API de dados abertos (1..13). As que retornarem
 # vazio custam só uma chamada.
 MODALIDADES = list(range(1, 14))
-JANELA_DIAS_PADRAO = 180
+JANELA_DIAS_PADRAO = 365
 DETALHE_TTL = 6 * 3600
 
 # Sugestões de órgão demandante para o SEI de Rondônia (prefixo do nº do processo).
@@ -77,7 +77,7 @@ def init_db():
                 codigo TEXT PRIMARY KEY,
                 nome TEXT,
                 limite_padrao REAL NOT NULL DEFAULT 0,
-                janela_dias INTEGER NOT NULL DEFAULT 180,
+                janela_dias INTEGER NOT NULL DEFAULT 365,
                 ultima_atualizacao TEXT,
                 primeira_carga TEXT
             );
@@ -105,6 +105,18 @@ def init_db():
             );
             """
         )
+        # migrações (bancos criados por versões anteriores)
+        cols_u = {r[1] for r in con.execute("PRAGMA table_info(uasg)")}
+        for col, ddl in (
+            ("primeira_carga", "TEXT"),
+            ("modo_alcada", "TEXT NOT NULL DEFAULT 'porte_abc'"),
+            ("corte_abc", "REAL NOT NULL DEFAULT 80"),
+            ("garantia", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if col not in cols_u:
+                con.execute(f"ALTER TABLE uasg ADD COLUMN {col} {ddl}")
+        if "porte" not in {r[1] for r in con.execute("PRAGMA table_info(regra)")}:
+            con.execute("ALTER TABLE regra ADD COLUMN porte TEXT")
 
 
 # ------------------------------------------------------------------------- HTTP
@@ -247,6 +259,13 @@ def listar(params):
         uasgs = {u["codigo"]: dict(u) for u in con.execute("SELECT * FROM uasg")}
         regras = carregar_regras(con)
         rows = con.execute("SELECT * FROM compra").fetchall()
+    compras_por_uasg = {}
+    for row in rows:
+        compras_por_uasg.setdefault(row["uasg"], []).append(json.loads(row["dados"]))
+    alcadas = {
+        c: calcular_alcada(u, compras_por_uasg.get(c, []), regras.get(c, []))
+        for c, u in uasgs.items() if u.get("modo_alcada") == "porte_abc"
+    }
     out = []
     for row in rows:
         u = uasgs.get(row["uasg"])
@@ -259,7 +278,16 @@ def listar(params):
         regra, pref = resolver_orgao(r, u, regras.get(row["uasg"], []))
         if regra and regra["ignorar"]:
             continue
-        limite = regra["limite"] if regra and regra["limite"] is not None else u["limite_padrao"]
+        alc = alcadas.get(row["uasg"])
+        porte = alc["porte"].get(pref or "?") if alc else None
+        if regra and regra["limite"] is not None:
+            limite, origem = regra["limite"], "manual do órgão"
+        elif alc and (pref or "?") in alc["limite"]:
+            limite = alc["limite"][pref or "?"]
+            origem = (f"garantia: maior compra do órgão" if alc["garantido"][pref or "?"]
+                      else f"régua porte {NOME_PORTE[porte]} · ABC {u['corte_abc']:.0f}%")
+        else:
+            limite, origem = u["limite_padrao"], "padrão da UASG"
         valor = r.get("valorTotalEstimado") or 0
         sigiloso = (r.get("orcamentoSigilosoCodigo") or 1) != 1 or valor <= 1
         abaixo = (not sigiloso) and valor < (limite or 0)
@@ -275,12 +303,12 @@ def listar(params):
                 "orgaoDefinido": bool(regra),
                 "prefixo": pref,
                 "limiteAplicado": limite,
-                "origemLimite": "órgão" if regra and regra["limite"] is not None else "UASG",
+                "origemLimite": origem,
+                "porte": porte,
                 "status": st,
                 "sigiloso": sigiloso,
-                # "novo" = apareceu depois da carga inicial e nos últimos 7 dias
-                "novo": bool(u["primeira_carga"]) and row["primeira_vez"] > u["primeira_carga"]
-                        and row["primeira_vez"] >= (datetime.now() - timedelta(days=7)).isoformat(),
+                # "novo" = publicada no PNCP nos últimos 7 dias
+                "novo": (r.get("dataPublicacaoPncp") or "") >= (datetime.now() - timedelta(days=7)).isoformat(),
                 "primeiraVez": row["primeira_vez"],
                 "numero": f'{r.get("numeroCompra")}/{r.get("anoCompraPncp")}',
                 "modalidade": r.get("modalidadeNome"),
@@ -313,18 +341,20 @@ def listar(params):
     return out
 
 
-PERCENTIL_SUGESTAO = 80
-AMOSTRA_MINIMA = 5  # abaixo disso a sugestão do órgão herda o P80 da UASG
+PORTES = ("G", "M", "P")
+NOME_PORTE = {"G": "Grande", "M": "Médio", "P": "Pequeno"}
 
 
-def percentil(valores, p):
-    """Percentil com interpolação linear (mesmo método do Excel PERCENTIL.INC)."""
-    v = sorted(valores)
-    if not v:
-        return None
-    k = (len(v) - 1) * p / 100
-    i = int(k)
-    return v[i] if i + 1 >= len(v) else v[i] + (v[i + 1] - v[i]) * (k - i)
+def corte_abc(valores, frac):
+    """Curva ABC: menor valor que ainda pertence à classe A, i.e. as maiores compras
+    que, somadas, atingem `frac` do valor total."""
+    v = sorted(valores, reverse=True)
+    total, acc = sum(v), 0.0
+    for x in v:
+        acc += x
+        if acc >= frac * total:
+            return x
+    return v[-1] if v else None
 
 
 def valor_comparavel(r):
@@ -335,58 +365,126 @@ def valor_comparavel(r):
     return v
 
 
+def calcular_alcada(uasg_row, compras, regras):
+    """Régua automática por porte do órgão demandante.
+
+    1. Porte: órgãos (prefixo do processo) ordenados pelo volume estimado na janela e
+       divididos em tercis -> Grande / Médio / Pequeno. Pode ser sobrescrito por regra.
+    2. Régua da classe: corte da curva ABC das compras de todos os órgãos da classe
+       (as maiores compras que somam `corte_abc`% do valor da classe).
+    3. Garantia: a régua de um órgão nunca passa da maior compra dele na janela,
+       assim nenhum órgão fica sem nenhuma licitação analisada.
+    4. Piso: o limite padrão da UASG é a materialidade mínima; nenhuma régua fica abaixo dele.
+    """
+    frac = (uasg_row.get("corte_abc") or 80) / 100
+    por = {}
+    for r in compras:
+        v = valor_comparavel(r)
+        if v is not None:
+            por.setdefault(prefixo_processo(r.get("processo")) or "?", []).append(v)
+    override = {rg["padrao"]: rg["porte"] for rg in regras if rg["tipo"] == "processo" and rg.get("porte")}
+    ordem = sorted(por, key=lambda o: -sum(por[o]))
+    n = len(ordem)
+    porte = {}
+    for i, o in enumerate(ordem):
+        porte[o] = override.get(o) or ("G" if i < n / 3 else "M" if i < 2 * n / 3 else "P")
+    valores_classe = {k: [] for k in PORTES}
+    for o, v in por.items():
+        valores_classe[porte[o]] += v
+    regua = {k: corte_abc(v, frac) for k, v in valores_classe.items()}
+    limite, garantido = {}, {}
+    for o, v in por.items():
+        rg = regua[porte[o]]
+        if rg is None:
+            continue
+        piso = uasg_row.get("limite_padrao") or 0
+        if uasg_row.get("garantia", 1) and max(v) < rg:
+            limite[o], garantido[o] = max(piso, max(v)), True
+        else:
+            limite[o], garantido[o] = max(piso, rg), False
+    total = sum(sum(v) for v in por.values()) or 1
+    sel = [(o, x) for o, v in por.items() for x in v if o in limite and x >= limite[o]]
+    resumo = {
+        "compras": sum(len(v) for v in por.values()),
+        "selecionadas": len(sel),
+        "valorCoberto": sum(x for _, x in sel) / total,
+        "orgaosSemNada": sum(1 for o in por if not any(x >= limite.get(o, float("inf")) for x in por[o])),
+    }
+    return {
+        "porte": porte, "regua": regua, "limite": limite, "garantido": garantido, "volume": {o: sum(v) for o, v in por.items()},
+        "amostra": {o: len(v) for o, v in por.items()}, "resumo": resumo,
+        "orgaosPorClasse": {k: sum(1 for o in porte if porte[o] == k) for k in PORTES},
+    }
+
+
+def simular(uasg_row, compras, regras, cortes=(70, 80, 90, 95)):
+    out = []
+    for c in cortes:
+        for g in (1, 0):
+            a = calcular_alcada({**uasg_row, "corte_abc": c, "garantia": g}, compras, regras)
+            andamento = 0
+            agora = datetime.now().isoformat(timespec="seconds")
+            for r in compras:
+                v = valor_comparavel(r)
+                o = prefixo_processo(r.get("processo")) or "?"
+                if v is not None and o in a["limite"] and v >= a["limite"][o] and status_andamento(r, agora) in ANDAMENTO:
+                    andamento += 1
+            out.append({"corte": c, "garantia": bool(g), **a["resumo"], "emAndamento": andamento,
+                        "regua": a["regua"]})
+    return out
+
+
 def orgaos_detectados(uasg):
-    """Agrupa as compras da UASG por prefixo de processo, para configurar alçadas."""
+    """Agrupa as compras da UASG por órgão demandante (prefixo do processo) com o
+    porte, a régua automática e a simulação de cortes ABC."""
     agora = datetime.now().isoformat(timespec="seconds")
     with db() as con:
+        u = con.execute("SELECT * FROM uasg WHERE codigo=?", (uasg,)).fetchone()
         rows = con.execute("SELECT dados FROM compra WHERE uasg=?", (uasg,)).fetchall()
         regras = [dict(r) for r in con.execute("SELECT * FROM regra WHERE uasg=?", (uasg,))]
-    grupos, todos_valores = {}, []
-    for row in rows:
-        r = json.loads(row["dados"])
-        pref = prefixo_processo(r.get("processo")) or "(sem processo)"
-        g = grupos.setdefault(
-            pref, {"prefixo": pref, "qtd": 0, "andamento": 0, "valor": 0.0, "siglas": {}, "exemplo": None,
-                   "valores": []}
-        )
-        vc = valor_comparavel(r)
-        if vc is not None:
-            g["valores"].append(vc)
-            todos_valores.append(vc)
+    if not u:
+        raise ValueError("UASG não cadastrada")
+    u = dict(u)
+    compras = [json.loads(r["dados"]) for r in rows]
+    alc = calcular_alcada(u, compras, regras)
+    grupos = {}
+    for r in compras:
+        pref = prefixo_processo(r.get("processo")) or "?"
+        g = grupos.setdefault(pref, {"prefixo": pref, "qtd": 0, "andamento": 0, "andamentoAcima": 0,
+                                     "valor": 0.0, "siglas": {}, "exemplo": None, "maior": 0.0})
         g["qtd"] += 1
-        g["valor"] += r.get("valorTotalEstimado") or 0
+        v = valor_comparavel(r) or 0
+        g["valor"] += v
+        g["maior"] = max(g["maior"], v)
         if status_andamento(r, agora) in ANDAMENTO:
             g["andamento"] += 1
+            if v >= alc["limite"].get(pref, float("inf")):
+                g["andamentoAcima"] += 1
         g["exemplo"] = g["exemplo"] or (r.get("objetoCompra") or "")[:160]
-        for s in SIGLA_RE.findall(r.get("objetoCompra") or ""):
-            if s not in SIGLAS_IGNORADAS:
-                g["siglas"][s] = g["siglas"].get(s, 0) + 1
+        for sg in SIGLA_RE.findall(r.get("objetoCompra") or ""):
+            if sg not in SIGLAS_IGNORADAS:
+                g["siglas"][sg] = g["siglas"].get(sg, 0) + 1
     regra_por_pref = {r["padrao"]: r for r in regras if r["tipo"] == "processo"}
-    p80_uasg = percentil(todos_valores, PERCENTIL_SUGESTAO)
     out = []
     for g in grupos.values():
-        vals = g.pop("valores")
-        g["amostra"] = len(vals)
-        g["mediana"] = percentil(vals, 50)
-        g["p80Proprio"] = percentil(vals, PERCENTIL_SUGESTAO)
-        # Amostra pequena: o percentil do órgão não é confiável, usa o da UASG.
-        if len(vals) >= AMOSTRA_MINIMA:
-            g["limiteSugerido"], g["baseSugestao"] = g["p80Proprio"], "órgão"
-        else:
-            g["limiteSugerido"], g["baseSugestao"] = p80_uasg, "UASG (amostra pequena)"
         sig = sorted(g["siglas"].items(), key=lambda kv: -kv[1])
-        g["siglas"] = [s for s, _ in sig[:4]]
+        g["siglas"] = [x for x, _ in sig[:4]]
         g["sugestao"] = SUGESTOES_SEI_RO.get(g["prefixo"]) or (g["siglas"][0] if g["siglas"] else "")
         g["regra"] = regra_por_pref.get(g["prefixo"])
+        g["porte"] = alc["porte"].get(g["prefixo"])
+        g["porteManual"] = bool(g["regra"] and g["regra"].get("porte"))
+        g["limiteAuto"] = alc["limite"].get(g["prefixo"])
+        g["garantido"] = alc["garantido"].get(g["prefixo"], False)
         out.append(g)
-    out.sort(key=lambda g: -g["qtd"])
+    out.sort(key=lambda g: -g["valor"])
     return {
         "grupos": out,
         "regras": regras,
-        "percentil": PERCENTIL_SUGESTAO,
-        "amostraMinima": AMOSTRA_MINIMA,
-        "p80Uasg": p80_uasg,
-        "amostraUasg": len(todos_valores),
+        "uasg": u,
+        "regua": alc["regua"],
+        "orgaosPorClasse": alc["orgaosPorClasse"],
+        "resumo": alc["resumo"],
+        "simulacao": simular(u, compras, regras),
     }
 
 
@@ -528,12 +626,26 @@ class Handler(BaseHTTPRequestHandler):
                 if not codigo:
                     return self._send(400, {"erro": "Código de UASG inválido"})
                 with db() as con:
+                    atual = con.execute("SELECT * FROM uasg WHERE codigo=?", (codigo,)).fetchone()
+                    atual = dict(atual) if atual else {}
+
+                    def campo(k, padrao):
+                        return b[k] if b.get(k) not in (None, "") else atual.get(k, padrao)
+
+                    modo = campo("modo_alcada", "porte_abc")
+                    if modo not in ("porte_abc", "fixo"):
+                        return self._send(400, {"erro": "modo_alcada inválido"})
                     con.execute(
-                        """INSERT INTO uasg (codigo, nome, limite_padrao, janela_dias) VALUES (?,?,?,?)
+                        """INSERT INTO uasg (codigo, nome, limite_padrao, janela_dias, modo_alcada, corte_abc, garantia)
+                           VALUES (?,?,?,?,?,?,?)
                            ON CONFLICT(codigo) DO UPDATE SET limite_padrao=excluded.limite_padrao,
-                               janela_dias=excluded.janela_dias, nome=COALESCE(excluded.nome, uasg.nome)""",
-                        (codigo, b.get("nome") or None, float(b.get("limite_padrao") or 0),
-                         int(b.get("janela_dias") or JANELA_DIAS_PADRAO)),
+                               janela_dias=excluded.janela_dias, modo_alcada=excluded.modo_alcada,
+                               corte_abc=excluded.corte_abc, garantia=excluded.garantia,
+                               nome=COALESCE(excluded.nome, uasg.nome)""",
+                        (codigo, b.get("nome") or None, float(campo("limite_padrao", 0)),
+                         int(campo("janela_dias", JANELA_DIAS_PADRAO)), modo,
+                         min(99.0, max(50.0, float(campo("corte_abc", 80)))),
+                         1 if campo("garantia", 1) in (1, True, "1", "true") else 0),
                     )
                 return self._send(200, {"ok": True, "codigo": codigo})
             m = re.fullmatch(r"/api/uasgs/(\d+)", p)
@@ -557,11 +669,12 @@ class Handler(BaseHTTPRequestHandler):
                 lim = None if lim in (None, "") else float(lim)
                 with db() as con:
                     con.execute(
-                        """INSERT INTO regra (uasg, tipo, padrao, orgao, limite, ignorar) VALUES (?,?,?,?,?,?)
+                        """INSERT INTO regra (uasg, tipo, padrao, orgao, limite, ignorar, porte) VALUES (?,?,?,?,?,?,?)
                            ON CONFLICT(uasg, tipo, padrao) DO UPDATE SET orgao=excluded.orgao,
-                               limite=excluded.limite, ignorar=excluded.ignorar""",
+                               limite=excluded.limite, ignorar=excluded.ignorar, porte=excluded.porte""",
                         (b["uasg"], b.get("tipo", "processo"), str(b["padrao"]).strip(),
-                         (b.get("orgao") or b["padrao"]).strip(), lim, 1 if b.get("ignorar") else 0),
+                         (b.get("orgao") or b["padrao"]).strip(), lim, 1 if b.get("ignorar") else 0,
+                         b.get("porte") if b.get("porte") in PORTES else None),
                     )
                 return self._send(200, {"ok": True})
             m = re.fullmatch(r"/api/regras/(\d+)", p)
